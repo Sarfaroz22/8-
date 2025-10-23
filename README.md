@@ -42,6 +42,12 @@ class Microwave:
         )
 
         self._is_light_on = False
+        # Новые атрибуты состояния (добавлено здесь, после _is_light_on)
+        self._current_mode: str = "idle"  # idle, timer, frozen
+        self._timer_seconds: int = 0
+        self._is_cooking: bool = False
+        self._setting_time: bool = False  # Флаг, что мы устанавливаем время
+
         self._button_data: list[
             tuple[str, tuple[float, float], tuple[float, float], object]
         ]
@@ -147,39 +153,86 @@ class Microwave:
     def get_body(self) -> Surface:
         return self._body_light if self._is_light_on else self._body
 
+    # Обновлённые методы кнопок (заменены на функциональную логику)
     def on_timer_click(self) -> None:
-        print("Нажата кнопка: timer")
+        if not self._is_cooking and self._is_door_closed:
+            self._current_mode = "timer"
+            self._setting_time = True
+            print("Режим установки времени активирован.")
 
     def on_quick_defrost_click(self) -> None:
-        print("Нажата кнопка: frozen")
+        if not self._is_cooking and self._is_door_closed:
+            self._current_mode = "frozen"
+            self._timer_seconds = 300  # 5 минут по умолчанию для разморозки
+            print("Режим быстрой разморозки активирован. Нажмите Start для запуска.")
 
     def on_double_left_click(self) -> None:
-        print("Нажата кнопка: double_left")
+        if self._setting_time:
+            self._timer_seconds = max(0, self._timer_seconds - 600)  # Минус 10 минут
+            print(f"Время: {self._timer_seconds // 60:02d}:{self._timer_seconds % 60:02d}")
 
     def on_left_click(self) -> None:
-        print("Нажата кнопка: left")
+        if self._setting_time:
+            self._timer_seconds = max(0, self._timer_seconds - 60)  # Минус 1 минута
+            print(f"Время: {self._timer_seconds // 60:02d}:{self._timer_seconds % 60:02d}")
 
     def on_ok_click(self) -> None:
-        print("Нажата кнопка: ok")
+        if self._setting_time:
+            self._setting_time = False
+            print("Время подтверждено. Нажмите Start для запуска.")
 
     def on_right_click(self) -> None:
-        print("Нажата кнопка: right")
+        if self._setting_time:
+            self._timer_seconds += 60  # Плюс 1 минута
+            print(f"Время: {self._timer_seconds // 60:02d}:{self._timer_seconds % 60:02d}")
 
     def on_double_right_click(self) -> None:
-        print("Нажата кнопка: double_right")
+        if self._setting_time:
+            self._timer_seconds += 600  # Плюс 10 минут
+            print(f"Время: {self._timer_seconds // 60:02d}:{self._timer_seconds % 60:02d}")
 
     def on_start_click(self) -> None:
-        print("Нажата кнопка: start")
+        if self._timer_seconds > 0 and not self._is_cooking and self._is_door_closed:
+            self._is_cooking = True
+            self._is_light_on = True  # Зажигаем свет внутри
+            print(f"Запуск! Режим: {self._current_mode}. Время: {self._timer_seconds} сек.")
 
     def on_stop_click(self) -> None:
-        print("Нажата кнопка: stop")
+        if self._is_cooking:
+            self._is_cooking = False
+            self._is_light_on = False
+            self._timer_seconds = 0
+            self._current_mode = "idle"
+            print("Остановлено.")
 
+    # Обновлённый draw_timer (заменён полностью)
     def draw_timer(self, surface: Surface) -> None:
-        current_time = datetime.now().strftime("%H:%M")
+        if self._is_cooking and self._timer_seconds > 0:
+            minutes = self._timer_seconds // 60
+            seconds = self._timer_seconds % 60
+            time_str = f"{minutes:02d}:{seconds:02d}"
+            color = (255, 0, 0)  # Красный, когда готовит
+        elif self._setting_time:
+            minutes = self._timer_seconds // 60
+            seconds = self._timer_seconds % 60
+            time_str = f"{minutes:02d}:{seconds:02d}"
+            color = (0, 255, 0)  # Зелёный, когда устанавливаем
+        else:
+            time_str = "00:00"
+            color = (0, 255, 0)
 
-        time_surface = self._timer_font.render(current_time, True, (0, 255, 0))
-
+        time_surface = self._timer_font.render(time_str, True, color)
         surface.blit(time_surface, (885, 130))
+
+    # Новый метод update_timer (добавлен после draw_timer)
+    def update_timer(self) -> None:
+        if self._is_cooking and self._timer_seconds > 0:
+            self._timer_seconds -= 1  # Уменьшаем каждую секунду (нужен таймер в игре)
+            if self._timer_seconds == 0:
+                self._is_cooking = False
+                self._current_mode = "idle"
+                self._is_light_on = False
+                print("Готово! Микроволновка закончила.")
 
     def draw_buttons(self, surface: Surface) -> None:
         for button in self._buttons:
