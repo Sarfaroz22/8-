@@ -1,101 +1,226 @@
-import tkinter as tk
-from tkinter import messagebox
-import math
+import os
+import re
+from datetime import datetime
+import pygame
+from pygame import Rect, Surface
+from pygame.event import Event
 
-class PieChartApp:
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("Pie Chart Input")
+from utils import fetch_resource, load_scaled_image
 
-        # Поле для ввода меток (через запятую)
-        tk.Label(self.root, text="Введите метки (через запятую):").pack()
-        self.labels_entry = tk.Entry(self.root, width=50)
-        self.labels_entry.pack()
 
-        # Поле для ввода значений (через запятую)
-        tk.Label(self.root, text="Введите значения (через запятую):").pack()
-        self.values_entry = tk.Entry(self.root, width=50)
-        self.values_entry.pack()
+class Microwave:
+    def __init__(
+        self,
+    ) -> None:
+        self.is_running: bool = False
+        self.SIZE = self.width, self.height = 1500, 750
+        self.BODY_POSITION: tuple[int, int] = (350, 90)
+        self.BODY_SIZE: tuple[int, int] = (700, 450)
 
-        # Кнопка для построения диаграммы
-        self.draw_button = tk.Button(self.root, text="Построить диаграмму", command=self.on_draw)
-        self.draw_button.pack(pady=10)
+        self._body: Surface
+        self._body_light: Surface
 
-        # Canvas для рисования диаграммы
-        self.canvas = tk.Canvas(self.root, width=500, height=400)
-        self.canvas.pack()
+        self._DOOR_OFFSET: tuple[float, float] = (-0.279, -0.144)
+        self._DOOR_SIZE_RATIO: tuple[float, float] = (1.014, 1.267)
 
-    def on_draw(self):
-        labels_text = self.labels_entry.get().strip()
-        values_text = self.values_entry.get().strip()
+        self._CLOSED_DOOR_OFFSET: tuple[float, float] = (0.057, 0.056)
+        self._CLOSED_DOOR_SIZE_RATIO: tuple[float, float] = (0.671, 0.856)
 
-        if not labels_text or not values_text:
-            messagebox.showerror("Ошибка", "Пожалуйста, заполните оба поля.")
-            return
+        self._OPENNED_DOOR_OFFSET: tuple[float, float] = (-0.259, -0.133)
+        self._OPENNED_DOOR_SIZE_RATIO: tuple[float, float] = (0.346, 1.236)
 
-        labels = [label.strip() for label in labels_text.split(",")]
-        values_str = [v.strip() for v in values_text.split(",")]
+        self._DOOR_X_POSITION: int = self.BODY_POSITION[0] - 195
+        self._DOOR_Y_POSITION: int = self.BODY_POSITION[1] - 65
+        self._door_state = 0
+        self._is_door_closed: bool = True
+        self._is_door_openning: bool = False
+        self._is_door_closing: bool = False
+        self._door_frames: list[Surface]
 
-        if len(labels) != len(values_str):
-            messagebox.showerror("Ошибка", "Количество меток и значений должно совпадать.")
-            return
+        self._DOOR_RECT, self._closed_door_rect, self._openned_door_rect = (
+            self._resize()
+        )
 
-        try:
-            values = [float(v) for v in values_str]
-        except ValueError:
-            messagebox.showerror("Ошибка", "Значения должны быть числами.")
-            return
+        self._is_light_on = False
+        self._button_data: list[
+            tuple[str, tuple[float, float], tuple[float, float], object]
+        ]
+        self._buttons: list[dict[str, str | Surface | Rect]]
+        self._timer_font: pygame.font.SysFont = pygame.font.SysFont("Arial", 74)
+        self._timer_text: datetime
 
-        if any(v < 0 for v in values):
-            messagebox.showerror("Ошибка", "Значения должны быть неотрицательными.")
-            return
+        self.initialize_data()
 
-        data = dict(zip(labels, values))
-        if sum(values) == 0:
-            messagebox.showerror("Ошибка", "Сумма значений должна быть больше нуля.")
-            return
+    def _resize(self) -> tuple[Rect, Rect, Rect]:
+        bx, by = self.BODY_POSITION
+        bw, bh = self.BODY_SIZE
 
-        self.draw_pie_chart(data)
-
-    def draw_pie_chart(self, data_dict):
-        self.canvas.delete("all")
-        total = sum(data_dict.values())
-
-        radius = 150
-        center_x = 250
-        center_y = 200
-
-        start_angle = 0
-
-        colors = ['red', 'blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'yellow', 'brown', 'pink']
-
-        for i, (label, value) in enumerate(data_dict.items()):
-            extent_angle = (value / total) * 360
-            color = colors[i % len(colors)]
-
-            self.canvas.create_arc(
-                center_x - radius,
-                center_y - radius,
-                center_x + radius,
-                center_y + radius,
-                start=start_angle,
-                extent=extent_angle,
-                fill=color,
-                outline='black'
+        def rel_rect(
+            offset_ratio: tuple[float, float], size_ratio: tuple[float, float]
+        ) -> Rect:
+            ox, oy = offset_ratio
+            sw, sh = size_ratio
+            return Rect(
+                bx + bw * ox,
+                by + bh * oy,
+                bw * sw,
+                bh * sh,
             )
 
-            mid_angle_rad = math.radians(start_angle + extent_angle / 2)
-            label_x = center_x + (radius / 2) * math.cos(mid_angle_rad)
-            label_y = center_y - (radius / 2) * math.sin(mid_angle_rad)
+        return (
+            rel_rect(self._DOOR_OFFSET, self._DOOR_SIZE_RATIO),
+            rel_rect(self._CLOSED_DOOR_OFFSET, self._CLOSED_DOOR_SIZE_RATIO),
+            rel_rect(self._OPENNED_DOOR_OFFSET, self._OPENNED_DOOR_SIZE_RATIO),
+        )
 
-            percentage_text = f"{label}\n{(value / total) * 100:.1f}%"
-            self.canvas.create_text(label_x, label_y, text=percentage_text, fill='black')
+    def sort_files_numerically(self, files: list[str]) -> list[str]:
+        return sorted(
+            files,
+            key=lambda name: [
+                int(s) if s.isdigit() else s for s in re.split(r"(\d+)", name)
+            ],
+        )
 
-            start_angle += extent_angle
+    def initialize_data(self) -> None:
+        frames_folder: str = fetch_resource("door_frames")
+        self._door_frames = [
+            load_scaled_image(
+                os.path.join(frames_folder, file),
+                (self._DOOR_RECT.w, self._DOOR_RECT.h),
+            )
+            for file in self.sort_files_numerically(os.listdir(frames_folder))
+            if file.endswith(".png")
+        ]
 
-    def run(self):
-        self.root.mainloop()
+        buttons_folder = fetch_resource("buttons")
+        self._button_data = [
+            ("timer", (0.75, 0.077), (0.221, 0.144), self.on_timer_click),
+            ("frozen", (0.75, 0.26), (0.214, 0.133), self.on_quick_defrost_click),
+            ("double_left", (0.74, 0.426), (0.042, 0.084), self.on_double_left_click),
+            ("left", (0.787, 0.422), (0.035, 0.088), self.on_left_click),
+            ("ok", (0.828, 0.422), (0.057, 0.088), self.on_ok_click),
+            ("right", (0.892, 0.422), (0.035, 0.088), self.on_right_click),
+            (
+                "double_right",
+                (0.935, 0.422),
+                (0.042, 0.088),
+                self.on_double_right_click,
+            ),
+            ("start", (0.781, 0.555), (0.142, 0.133), self.on_start_click),
+            ("stop", (0.781, 0.733), (0.142, 0.133), self.on_stop_click),
+        ]
+        self._buttons = self._create_buttons(buttons_folder)
+        self._body = load_scaled_image(fetch_resource("microwave.png"), self.BODY_SIZE)
+        self._body_light = load_scaled_image(
+            fetch_resource("microwave_light.png"), self.BODY_SIZE
+        )
 
-if __name__ == "__main__":
-    app = PieChartApp()
-    app.run()
+        self.is_running = True
+
+    def _create_buttons(self, buttons_folder: str):
+        bx, by = self.BODY_POSITION
+        bw, bh = self.BODY_SIZE
+
+        def rel_to_abs(pos_ratio, size_ratio):
+            """Перевод относительных координат и размеров в абсолютные."""
+            rx, ry = pos_ratio
+            rw, rh = size_ratio
+            return (bx + bw * rx, by + bh * ry), (bw * rw, bh * rh)
+
+        buttons = []
+        for name, pos_ratio, size_ratio, action in self._button_data:
+            pos, size = rel_to_abs(pos_ratio, size_ratio)
+            image_path = os.path.join(buttons_folder, f"{name}.png")
+            if not os.path.exists(image_path):
+                continue
+
+            buttons.append(
+                {
+                    "name": name,
+                    "image": load_scaled_image(image_path, size),
+                    "rect": Rect(pos, size),
+                    "action": action,
+                }
+            )
+        return buttons
+
+    def get_body(self) -> Surface:
+        return self._body_light if self._is_light_on else self._body
+
+    def on_timer_click(self) -> None:
+        print("Нажата кнопка: timer")
+
+    def on_quick_defrost_click(self) -> None:
+        print("Нажата кнопка: frozen")
+
+    def on_double_left_click(self) -> None:
+        print("Нажата кнопка: double_left")
+
+    def on_left_click(self) -> None:
+        print("Нажата кнопка: left")
+
+    def on_ok_click(self) -> None:
+        print("Нажата кнопка: ok")
+
+    def on_right_click(self) -> None:
+        print("Нажата кнопка: right")
+
+    def on_double_right_click(self) -> None:
+        print("Нажата кнопка: double_right")
+
+    def on_start_click(self) -> None:
+        print("Нажата кнопка: start")
+
+    def on_stop_click(self) -> None:
+        print("Нажата кнопка: stop")
+
+    def draw_timer(self, surface: Surface) -> None:
+        current_time = datetime.now().strftime("%H:%M")
+
+        time_surface = self._timer_font.render(current_time, True, (0, 255, 0))
+
+        surface.blit(time_surface, (885, 130))
+
+    def draw_buttons(self, surface: Surface) -> None:
+        for button in self._buttons:
+            surface.blit(button["image"], button["rect"].topleft)  # type: ignore
+
+    def draw_door_hitboxes(self, surface: Surface) -> None:
+        pygame.draw.rect(surface, (0, 255, 0), self._closed_door_rect, 2)
+        pygame.draw.rect(surface, (0, 255, 0), self._openned_door_rect, 2)
+
+    def draw_door(self, surface: Surface) -> None:
+        door: Surface = self._door_frames[self._door_state]
+        surface.blit(door, self._DOOR_RECT.topleft)
+
+    def update_door(self) -> None:
+        if self._is_door_openning:
+            if self._door_state < len(self._door_frames) - 1:
+                self._door_state += 1
+            else:
+                self._is_door_openning = False
+        elif self._is_door_closing:
+            if self._door_state > 0:
+                self._door_state -= 1
+            else:
+                self._is_door_closing = False
+                self._is_door_closed = True
+
+    def on_event(self, event: Event) -> None:
+        mx, my = pygame.mouse.get_pos()
+        match event.type:
+            case pygame.QUIT:
+                self.is_running = False
+            case pygame.MOUSEBUTTONDOWN:
+                for button in self._buttons:
+                    if button["rect"].collidepoint(mx, my):  # type: ignore
+                        button["action"]()  # type: ignore
+                if bool(self._is_door_openning + self._is_door_closing) is True:
+                    return
+                if self._closed_door_rect.collidepoint(mx, my):
+                    self._is_door_closed = False
+                    self._is_door_openning = True
+                    return
+                if self._openned_door_rect.collidepoint(mx, my):
+                    self._is_door_closing = True
+                    return
